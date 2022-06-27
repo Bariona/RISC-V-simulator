@@ -4,15 +4,14 @@
 #include <assert.h>
 #include <iostream>
 
-const int SIZE = 32;
-
-template<typename T, int array_size = SIZE + 1>
+template<typename T, int array_size = 32 + 1>
 class queue {
-  private: 
+	// 维护的是下标[1:32]的循环队列
+  	private: 
 		int head, tail, size;
 		T a[array_size + 1];
 	public:
-		queue() { size = array_size; }
+		queue() { head = tail = 0, size = array_size; }
 		
 		inline bool isempty() { return head == tail; }
 		inline bool isfull() { return (tail + 1) % size == head; }
@@ -29,6 +28,13 @@ class queue {
 			++head; if(head == size) head = 0;
 			return a[head];
 		}
+	
+		inline int getTail() { return (tail + 1) % size + 1; } // 返回队列的下一个空位置
+		T & operator [] (int pos) {
+			assert(pos >= 1 && pos <= 32);
+			return a[pos - 1];
+		}
+		
 };
 
 # endif
