@@ -7,6 +7,7 @@
 typedef unsigned int uint;
 
 # define debug(x) std :: cout << #x << ": " << (x) << std :: endl;
+# define RED "/033[0;32;31m"
 
 const int SIZE = 32;
 
@@ -53,10 +54,29 @@ class Registerfile{
         memset(reg, 0, sizeof reg);
         memset(regState, 0, sizeof regState);
       }
+      void print() {
+        printf("id: ");
+        for(int i = 0; i < 32; ++i)
+          printf("%2d ", i); 
+        puts("");
+        printf("val:");
+        for(int i = 0; i < 32; ++i) {
+          printf("%2d ", reg[i]);
+        }
+        puts("");
+        printf("sta:");
+        for(int i = 0; i < 32; ++i)
+          printf("%2d ", regState[i]); 
+        puts("");
+      }
     };
   Regfile preReg, nexReg;
 
   public: 
+    void print() {
+      puts("   --- regfile ---");
+      nexReg.print();
+    }
     void update() {
       preReg = nexReg;
     }
@@ -71,7 +91,8 @@ class Registerfile{
     }
     inline void modify_value(int pos, int state, uint k) {
       // 需要当前reg[pos]的State与commit的指令编号相同才行!
-      assert(state == nexReg.regState[pos]);
+
+    // assert(state == nexReg.regState[pos]);
       if(state == nexReg.regState[pos]) {
         nexReg.regState[pos] = 0;
         nexReg.reg[pos] = k;
@@ -96,6 +117,10 @@ struct RS_node {
   RS_node(bool busy, int Q1, int Q2, uint V1, uint V2, Instruction ins, int target):
     busy(busy), Q1(Q1), Q2(Q2), V1(V1), V2(V2), ins(ins), target(target) {}
   
+  void print() {
+    if(!busy) return ;
+     ins.print(), printf(" %d, (%d)%d (%d)%d || %d %d\n", target, ins.rs1, Q1, ins.rs2, Q2, V1, V2);
+  }
   inline bool ready() { // ready 来执行的状态
     return !Q1 && !Q2; 
   }
@@ -130,6 +155,7 @@ struct Info {
   }
   void excute() {
     // excute ins这条指令, 将答案存储在val中
+    
     node.ins.doit(val, node.V1, node.V2);
   }
 };
@@ -150,6 +176,13 @@ class ReservationStation { // 保留站实现
           next[i] = i + 1; // 这里空的时候head就会是SIZE
       }
 
+      void print() {
+        for(int i = 0; i < SIZE; ++i) {
+          if(a[i].busy) {
+            a[i].print();
+          }
+        }
+      }
       inline bool isfull() { 
         return head == SIZE; 
       }
@@ -166,6 +199,11 @@ class ReservationStation { // 保留站实现
 
   public: 
     RS_node EXnode;
+
+    void print() {
+      puts("   --- 下个周期的 RS ---   ");
+      nex.print();
+    }
 
     void update() { 
       pre = nex; 
@@ -214,6 +252,9 @@ struct SLB_node {
   SLB_node(RS_node node, int hascommit):
     node(node), hascommit(hascommit) {}
   
+  void print() {
+    cout << "hascommit: " << hascommit << ' '; node.print();
+  }
   inline bool ready() {
     if(node.ins.typ == SB || node.ins.typ == SW || node.ins.typ == SH) 
       return node.ready() && hascommit;
@@ -234,6 +275,10 @@ class SLBuffer{
     queue<SLB_node> preSLB, nexSLB;
 
   public:
+    void print() {
+      printf(" ---- 下一个周期的 SLB --- \n");
+      nexSLB.print();
+    }
     void update() {
       preSLB = nexSLB;
     }
@@ -244,6 +289,12 @@ class SLBuffer{
       curSLBres.hasres = false;
 
       SLB_node &front = preSLB.getfront();
+      if(ROB.getfront()) {
+        
+      }
+      puts("@@@@@@@@@@SLB");
+      front.node.print();
+      cout << front.ready() << endl;
       if(front.ready()) {
         uint dst;
         front.node.ins.doit(dst, front.node.V1, front.node.V2);
@@ -279,6 +330,8 @@ class SLBuffer{
         curSLBres.val = front.node.V2;
         nexSLB.pop();
         
+      } else {
+        curSLBres.hasres = false;
       }
     }
     void modify(int id, uint val) {
@@ -310,6 +363,10 @@ struct ROB_node {
   }
   ROB_node(RS_node rs, bool ready = false, uint val = 0): 
     rs(rs), ready(ready), val(val) {}
+  
+  void print() {
+    cout << "ready " << ready << ' '; rs.print();
+  }
   void clear() {
     ready = false;
     val = 0;
@@ -324,10 +381,14 @@ class ReorderBuffer {
     queue<ROB_node> preROB, nexROB;
 
   public:
+    void print() {
+      printf("    --- 下个周期的 ROB ---\n");
+      nexROB.print();
+    }
     void update() {
       preROB = nexROB;
     }
-    inline int getpos() {
+    inline int getpos() { // 用来renaming
       return preROB.getTail();
     }
     inline bool isfull() {
@@ -336,11 +397,18 @@ class ReorderBuffer {
     void insert(const ROB_node x) {
       nexROB.push(x);
     }
-    bool can_commit() {
+    inline ROB_node getfront() {
+      return preROB.front();
+    }
+    inline bool can_commit() {
       return preROB.front().ready;
+    }
+    void pop() {
+      nexROB.pop();
     }
     void modify(int pos, uint val) {
       assert(pos >= 1 && pos <= 32);
+      // 有问题!!
       nexROB[pos].val = val;
       nexROB[pos].ready = true;
     }
@@ -412,8 +480,7 @@ void Issue() {
     int id = ROB.getpos(); // ROB中要插入的位置来作为regState[rd]的id
   # ifdef Debug
     // debug(issue_flag);
-    printf("issue instruct: "); 
-    ins.print();
+    printf("issue instruct: "), ins.println();
     printf("put it to ROB: %d\n", id);
   # endif
 
@@ -493,7 +560,6 @@ void run_ReservationStation() {
     cout << issue_to_rs << endl;
   # endif
   
-
   if(preEXres.hasres) { // 根据Excute的结果来修改RS_nex的值
     RS.modify(preEXres.pos, preEXres.val);
   }
@@ -506,14 +572,18 @@ void EX() {
   // 将当前处理好的指令存在val中, 并且存储EXres
   if(curEX.hasres) { // 当先存在可执行命令
   # ifdef Debug
-    cout << "current Excute: "; curEX.node.ins.print();
+    cout << "\033[31;1mcurrent Excute: \033[0m"; curEX.node.ins.println();
   # endif
 
     curEX.excute(); 
     
     curEXres.hasres = true;
     curEXres.val = curEX.val;
+    curEXres.node = curEX.node;
     curEXres.pos = curEX.pos;
+    if(curEX.node.ins.typ == JAL) {
+      debug(curEX.pos);
+    }
   } else { // 当前没有要excute的指令
     curEXres.hasres = false;
   }
@@ -549,18 +619,24 @@ void run_ROB() {
       nexCommit.pos = front.rs.target;
       nexCommit.node = front.rs;
       nexCommit.val = front.val;
+      
+      ROB.pop();
     } else {
       nexCommit.hasres = false;
     }
   }
   if(preEXres.hasres) {
+    // if(preEXres.val == 4160)
+    //   assert(0);
     ROB.modify(preEXres.pos, preEXres.val);
   }
   if(preSLBres.hasres) {
     ROB.modify(preSLBres.pos, preSLBres.val);
   }
 }
+
 void CLEAR();
+
 void Commit() {
   if(curCommit.hasres) {
     Instruction ins = curCommit.node.ins;
@@ -568,6 +644,8 @@ void Commit() {
       print(reg[0] & 255u);
       exit(0);
     }
+    cout << "\033[34;1m Commit: \033[0m"; curCommit.node.print();
+
     if(ins.typ == JALR || (ins.typ >= 3 && ins.typ <= 8)) { 
       // 分支预测指令: JALR 或者 branch指令
       bool predict_res = true;
@@ -600,7 +678,7 @@ int main() {
   while(true) {
     ++clk;
     # ifdef Debug
-      printf("==== cycle %d: begin ====\n", clk);
+      printf("\033[1;33m==== cycle %d: begin ====\033[0m\n", clk);
     # endif
 
     update();
@@ -615,10 +693,17 @@ int main() {
     run_ROB();
     Commit();
 
+    
     # ifdef Debug
+      RS.print();
+      SLB.print();
+      ROB.print();
+
+      reg.print();
       puts("");
     # endif
-    // exit(0);
+    if(clk == 10)
+      exit(0);
   }
   return 0;
 }
