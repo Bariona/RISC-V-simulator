@@ -88,11 +88,18 @@ struct RS_node {
     return !Q1 && !Q2; 
   }
   inline void clear() { 
-    busy = Q1 = Q2 = V1 = V2 = 0; 
+    busy = false;
+    Q1 = Q2 = V1 = V2 = 0; 
   }
   void modify(int id, uint val) {
-    if(Q1 == id) V1 = val;
-    if(Q2 == id) V2 = val;
+    if(Q1 == id) {
+      V1 = val;
+      Q1 = 0;
+    }
+    if(Q2 == id) {
+      V2 = val;
+      Q2 = 0;
+    }
   }
 };
 
@@ -151,15 +158,93 @@ class ReservationStation { // 保留站实现
     }
 };
 
+struct SLB_node {
+  RS_node node;
+  bool hascommit;
+  int cnt; // cnt 用来计数: 3个周期一次excute
+
+  SLB_node() { hascommit = cnt = 0; }
+  SLB_node(RS_node node, int hascommit, int cnt = 0):
+    node(node), hascommit(hascommit), cnt(cnt) {}
+  
+  inline bool ready() {
+    if(node.ins.typ == SB || node.ins.typ == SW || node.ins.typ == SH) 
+      return node.ready() && hascommit;
+    return node.ready();
+  }
+  void modify(int id, uint val) {
+    node.modify(id, val);
+  }
+  void clear() {
+    cnt = 0; 
+    node.clear();
+  }
+};
+
 class SLBuffer{
   private: 
-    queue<RS_node> preSLB, nexSLB;
+    queue<SLB_node> preSLB, nexSLB;
 
   public:
     void update() {
       preSLB = nexSLB;
     }
-    void insert(const RS_node x) {
+    inline bool empty() {
+      return preSLB.isempty();
+    }
+    void run() {
+      curSLBres.hasres = false;
+
+      SLB_node &front = preSLB.getfront();
+      if(front.ready()) {
+        ++front.cnt;
+
+        if(front.cnt == 3) {
+          uint dst;
+          front.node.ins.doit(dst, front.node.V1, front.node.V2);
+          switch(front.node.ins.typ) {
+            // store type
+            case SB: mem[int(dst)] = (unsigned char) front.node.V2; break;  // 取低位[7:0] (1byte) 
+            case SH: *(unsigned short *)(mem + int(dst)) = (unsigned short) front.node.V2; break; // [15:0]
+            case SW: *(unsigned int *)(mem + int(dst)) = front.node.V2; break;
+
+            // load type
+            case LB: { // 符号位拓展[7:0]
+              uint x = (uint) mem[dst]; 
+              if(x >> 7 & 1) x |= 0xffffff00;
+              front.node.V2 = x;
+              break;
+            }
+            case LH: { // 符号位拓展[15:0]
+              uint x = (uint) mem[dst] | ((uint) mem[dst + 1] << 8);
+              if(x >> 15 & 1) x |= 0xffff0000;
+              front.node.V2 = x;
+              break;
+            }
+            case LW: { // 符号位拓展[31:0]
+              int idx = dst;
+              front.node.V2 = (uint) mem[idx] | ((uint) mem[idx + 1] << 8) | ((uint) mem[idx + 2] << 16) | ((uint) mem[idx + 3] << 24);
+              break;
+            }
+            case LBU: front.node.V2 = (uint) mem[dst]; break;
+            case LHU: front.node.V2 = (uint) mem[dst] | ((uint) mem[dst + 1] << 8); break;
+          }
+          curSLBres.hasres = true;
+          curSLBres.pos = front.node.target;
+          curSLBres.val = front.node.V2;
+          nexSLB.pop();
+        } else {
+          // 同时也要对nexSLB进行修改
+          nexSLB.getfront() = front;
+        }
+      }
+    }
+    void modify(int id, uint val) {
+      for(int i = 1; i <= SIZE; ++i) {
+        nexSLB[i].modify(id, val);
+      }
+    }
+    void insert(const SLB_node x) {
       nexSLB.push(x);
     }
 };
@@ -167,14 +252,14 @@ class SLBuffer{
 struct ROB_node {
   RS_node rs;
   bool ready;
-  uint ans;
+  uint val;
 
   ROB_node() { 
     ready = false; 
-    ans = 0;
+    val = 0;
   }
-  ROB_node(RS_node rs, bool ready = false, uint ans = 0): 
-    rs(rs), ready(ready), ans(ans) {}
+  ROB_node(RS_node rs, bool ready = false, uint val = 0): 
+    rs(rs), ready(ready), val(val) {}
 };
 
 class ReorderBuffer {
@@ -182,15 +267,25 @@ class ReorderBuffer {
     queue<ROB_node> preROB, nexROB;
 
   public:
-    int getpos() {
-      return preROB.getTail();
-    }
-
     void update() {
       preROB = nexROB;
     }
+    inline int getpos() {
+      return preROB.getTail();
+    }
+    inline bool isfull() {
+      return nexROB.isfull();
+    }
     void insert(const ROB_node x) {
       nexROB.push(x);
+    }
+    bool can_commit() {
+      return preROB.front().ready;
+    }
+    void modify(int pos, uint val) {
+      assert(pos >= 1 && pos <= 32);
+      nexROB[pos].val = val;
+      nexROB[pos].ready = true;
     }
     ROB_node & operator [] (int pos) { 
       return preROB[pos];
@@ -263,6 +358,9 @@ void run_InstructionQueue() {
 RS_node Issue_ins;
 
 void Issue() {
+
+  issue_to_rs = issue_to_slb = false;
+
   if(issue_flag) { // 当前的IQ中可以issue一个指令
     assert(!preIQ.isempty());
 
@@ -270,13 +368,15 @@ void Issue() {
     int id = ROB.getpos(); // ROB中要插入的位置
 
     // 指令插入SLbuffer 或者 RS中
+    // 2. 在本次作业中，我们认为相应寄存器的值已在ROB中存储但尚未commit的情况是可以直接获得的，即你需要实现这个功能
+
     int Q1 = 0, Q2 = 0, V1 = 0, V2 = 0;
     {
       if(~ins.rs1) { // 得到Qj/Vj
         Q1 = reg(ins.rs1);
         if(!Q1) V1 = reg[ins.rs1];
         else if(ROB[Q1].ready) { // 可以从ROB中获取到值
-          V1 = ROB[Q1].ans;
+          V1 = ROB[Q1].val;
           Q1 = 0;
         } else {
           V1 = 0;
@@ -286,20 +386,21 @@ void Issue() {
         Q2 = reg(ins.rs2);
         if(!Q2) V2 = reg[ins.rs2];
         else if(ROB[Q2].ready) {
-          V2 = ROB[Q2].ans;
+          V2 = ROB[Q2].val;
           Q2 = 0;
         } else {
           V2 = 0;
         }
       }
-      if(~ins.rd) { // 修改目标寄存器 reg[rd] 的 State 状态, 改为id
+      if(~ins.rd) { 
+        // 修改目标寄存器 nexReg[rd] 的 State 状态, 改为id
         reg.modify_state(ins.rd, id); 
       }
       
       // true表示busy, target = -1表示没有目标寄存器, 为branch指令
       Issue_ins = RS_node(true, Q1, Q2, V1, V2, ins, (~ins.rd) ? id : -1); 
 
-      issue_to_rs = issue_to_slb = false;
+      
       if(9 <= ins.typ && ins.typ <= 11 || 13 <= ins.typ && ins.typ <= 17) {
       // load / stroe 指令
         issue_to_slb = 1;
@@ -309,7 +410,6 @@ void Issue() {
         // 发送给RS RS.insert(tmp);
       }
     }
-
     // 指令插入到ROB中
     ROB.insert(ROB_node(Issue_ins));
   }
@@ -318,16 +418,20 @@ void Issue() {
 void run_ReservationStation() {
   if(issue_to_rs && Issue_ins.ready()) {
     // 下一个周期做 Issue_ins, 存储在curEX中
-    curEX.hasres = 1; 
-    curEX.node = Issue_ins;
-    curEX.pos = Issue_ins.target;
+    nexEX.hasres = true; 
+    nexEX.node = Issue_ins;
+    nexEX.pos = Issue_ins.target;
   } else {
-    RS.insert(Issue_ins);
-    if(RS.canEX()) {
+    if(issue_to_rs) 
+      RS.insert(Issue_ins);
+
+    if(RS.canEX()) { 
       // 下一个周期做 RS.EXnode;
-      curEX.hasres = 1;
-      curEX.node = RS.EXnode;
-      curEX.pos = RS.EXnode.target;
+      nexEX.hasres = true;
+      nexEX.node = RS.EXnode;
+      nexEX.pos = RS.EXnode.target;
+    } else {
+      nexEX.hasres = false; // 没有指令可以执行
     }
   }
 
@@ -353,10 +457,42 @@ void EX() {
 }
 
 void run_SLBuffer() {
-
+  if(issue_to_slb) {
+    SLB_node tmp = SLB_node(Issue_ins, false); // 还没有commit
+    if(SLB.empty() && tmp.node.ready()) {
+      ++tmp.cnt;
+    }
+    SLB.insert(tmp);
+  }
+  if(!SLB.empty()) {
+    SLB.run();
+  }
+  //  同时SLBUFFER还需根据上个周期EX和SLBUFFER的计算结果遍历SLBUFFER进行数据的更新。
+  if(preEXres.hasres) {
+    SLB.modify(preEXres.pos, preEXres.val);
+  }
+  if(preSLBres.hasres) {
+    SLB.modify(preSLBres.pos, preSLBres.val);
+  }
+  
 }
 
+void run_ROB() {
+  if(ROB.isfull()) issue_flag_nex = false;
+  if(ROB.can_commit()) {
+    
+  }
 
+  if(preEXres.hasres) {
+    ROB.modify(preEXres.pos, preEXres.val);
+  }
+  if(preSLBres.hasres) {
+    ROB.modify(preSLBres.pos, preSLBres.val);
+  }
+}
+void Commit() {
+  
+}
 
 int main() {
   input();
@@ -370,6 +506,8 @@ int main() {
     run_SLBuffer();
     EX();
 
+    run_ROB();
+    Commit();
     exit(0);
   }
   return 0;
@@ -377,11 +515,10 @@ int main() {
 
 void update() {
   pc = next_pc;
-  issue_flag = issue_flag_nex;
-  issue_flag_nex = true;
+  issue_flag = issue_flag_nex, issue_flag_nex = true;
 
-  preEXres = curEXres; curEXres.clear();
-  preSLBres = curSLBres; curSLBres.clear();
+  preEXres = curEXres, curEXres.clear();
+  preSLBres = curSLBres, curSLBres.clear();
   curEX = nexEX, nexEX.clear();
 
   reg.update();
