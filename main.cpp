@@ -6,7 +6,14 @@
 #include <iostream>
 typedef unsigned int uint;
 
+# define debug(x) std :: cout << #x << ": " << (x) << std :: endl;
+
 const int SIZE = 32;
+
+# ifdef Debug
+  using std :: cout;
+  using std :: endl;
+# endif
 
 namespace {
   template <typename T>
@@ -19,17 +26,18 @@ namespace {
   }
 }
 
-int pc, next_pc;
+int clk = 0, pc, next_pc;
 unsigned char mem[1000005]; // unsigned char: 代表1个byte
 
 void input() {
   char s[100];
-  int address;
+  int address, getn;
   while(~scanf("%s", s)) {
     if(s[0] == '@') {
       sscanf(s + 1, "%x", &address);
     } else {
-      sscanf(s, "%x", mem + address);
+      sscanf(s, "%x", &getn);
+      mem[address] = getn;
       ++address;
     }
   }
@@ -69,6 +77,10 @@ class Registerfile{
         nexReg.reg[pos] = k;
       }
     }
+    void clear() {
+      memset(preReg.regState, 0, sizeof preReg.regState);
+      memset(nexReg.regState, 0, sizeof nexReg.regState);
+    }
 };
 
 struct RS_node {
@@ -103,6 +115,29 @@ struct RS_node {
   }
 };
 
+struct Info {
+  bool hasres;
+  int pos;
+  uint val;
+  RS_node node;
+
+  Info(bool hasres = 0, int pos = 0, uint val = 0):
+    hasres(hasres), pos(pos), val(val) {}
+
+  inline void clear() {
+    hasres = pos = val = 0;
+    node.clear();
+  }
+  void excute() {
+    // excute ins这条指令, 将答案存储在val中
+    node.ins.doit(val, node.V1, node.V2);
+  }
+};
+
+Info preEXres, curEXres, preSLBres, curSLBres;
+Info curEX, nexEX;
+Info curCommit, nexCommit;
+
 class ReservationStation { // 保留站实现
   private: 
     struct RSbuffer {
@@ -118,6 +153,13 @@ class ReservationStation { // 保留站实现
       inline bool isfull() { 
         return head == SIZE; 
       }
+      void clear() {
+        head = 0;
+        for(int i = 0; i < SIZE; ++i) {
+          a[i].clear();
+          next[i] = i + 1;
+        }
+      }
   };
   
   RSbuffer pre, nex; // 创建两个版本的RS
@@ -131,7 +173,7 @@ class ReservationStation { // 保留站实现
 
     bool canEX() {
       for(int i = 0; i < SIZE; ++i) {
-        if(pre.a[i].ready()) {
+        if(pre.a[i].busy && pre.a[i].ready()) {
           EXnode = pre.a[i];
           remove(i);
           return true;
@@ -156,16 +198,21 @@ class ReservationStation { // 保留站实现
         nex.a[i].modify(id, val); // 以此check是否能够修改
       }
     }
+    void clear() {
+      pre.clear();
+      nex.clear();
+      EXnode.clear();
+    }
 };
 
 struct SLB_node {
   RS_node node;
   bool hascommit;
-  int cnt; // cnt 用来计数: 3个周期一次excute
+  // cnt 用来计数: 3个周期一次excute
 
-  SLB_node() { hascommit = cnt = 0; }
-  SLB_node(RS_node node, int hascommit, int cnt = 0):
-    node(node), hascommit(hascommit), cnt(cnt) {}
+  SLB_node() { hascommit = 0; }
+  SLB_node(RS_node node, int hascommit):
+    node(node), hascommit(hascommit) {}
   
   inline bool ready() {
     if(node.ins.typ == SB || node.ins.typ == SW || node.ins.typ == SH) 
@@ -176,12 +223,13 @@ struct SLB_node {
     node.modify(id, val);
   }
   void clear() {
-    cnt = 0; 
+    hascommit = 0;
     node.clear();
   }
 };
 
 class SLBuffer{
+  friend void run_SLBuffer();
   private: 
     queue<SLB_node> preSLB, nexSLB;
 
@@ -197,46 +245,40 @@ class SLBuffer{
 
       SLB_node &front = preSLB.getfront();
       if(front.ready()) {
-        ++front.cnt;
+        uint dst;
+        front.node.ins.doit(dst, front.node.V1, front.node.V2);
+        switch(front.node.ins.typ) {
+          // store type
+          case SB: mem[int(dst)] = (unsigned char) front.node.V2; break;  // 取低位[7:0] (1byte) 
+          case SH: *(unsigned short *)(mem + int(dst)) = (unsigned short) front.node.V2; break; // [15:0]
+          case SW: *(unsigned int *)(mem + int(dst)) = front.node.V2; break;
 
-        if(front.cnt == 3) {
-          uint dst;
-          front.node.ins.doit(dst, front.node.V1, front.node.V2);
-          switch(front.node.ins.typ) {
-            // store type
-            case SB: mem[int(dst)] = (unsigned char) front.node.V2; break;  // 取低位[7:0] (1byte) 
-            case SH: *(unsigned short *)(mem + int(dst)) = (unsigned short) front.node.V2; break; // [15:0]
-            case SW: *(unsigned int *)(mem + int(dst)) = front.node.V2; break;
-
-            // load type
-            case LB: { // 符号位拓展[7:0]
-              uint x = (uint) mem[dst]; 
-              if(x >> 7 & 1) x |= 0xffffff00;
-              front.node.V2 = x;
-              break;
-            }
-            case LH: { // 符号位拓展[15:0]
-              uint x = (uint) mem[dst] | ((uint) mem[dst + 1] << 8);
-              if(x >> 15 & 1) x |= 0xffff0000;
-              front.node.V2 = x;
-              break;
-            }
-            case LW: { // 符号位拓展[31:0]
-              int idx = dst;
-              front.node.V2 = (uint) mem[idx] | ((uint) mem[idx + 1] << 8) | ((uint) mem[idx + 2] << 16) | ((uint) mem[idx + 3] << 24);
-              break;
-            }
-            case LBU: front.node.V2 = (uint) mem[dst]; break;
-            case LHU: front.node.V2 = (uint) mem[dst] | ((uint) mem[dst + 1] << 8); break;
+          // load type
+          case LB: { // 符号位拓展[7:0]
+            uint x = (uint) mem[dst]; 
+            if(x >> 7 & 1) x |= 0xffffff00;
+            front.node.V2 = x;
+            break;
           }
-          curSLBres.hasres = true;
-          curSLBres.pos = front.node.target;
-          curSLBres.val = front.node.V2;
-          nexSLB.pop();
-        } else {
-          // 同时也要对nexSLB进行修改
-          nexSLB.getfront() = front;
+          case LH: { // 符号位拓展[15:0]
+            uint x = (uint) mem[dst] | ((uint) mem[dst + 1] << 8);
+            if(x >> 15 & 1) x |= 0xffff0000;
+            front.node.V2 = x;
+            break;
+          }
+          case LW: { // 符号位拓展[31:0]
+            int idx = dst;
+            front.node.V2 = (uint) mem[idx] | ((uint) mem[idx + 1] << 8) | ((uint) mem[idx + 2] << 16) | ((uint) mem[idx + 3] << 24);
+            break;
+          }
+          case LBU: front.node.V2 = (uint) mem[dst]; break;
+          case LHU: front.node.V2 = (uint) mem[dst] | ((uint) mem[dst + 1] << 8); break;
         }
+        curSLBres.hasres = true;
+        curSLBres.pos = front.node.target;
+        curSLBres.val = front.node.V2;
+        nexSLB.pop();
+        
       }
     }
     void modify(int id, uint val) {
@@ -246,6 +288,14 @@ class SLBuffer{
     }
     void insert(const SLB_node x) {
       nexSLB.push(x);
+    }
+    inline void can_commit() {
+      nexSLB.getfront().hascommit = true;
+    }
+
+    void clear() {
+      preSLB.clear();
+      nexSLB.clear();
     }
 };
 
@@ -260,9 +310,16 @@ struct ROB_node {
   }
   ROB_node(RS_node rs, bool ready = false, uint val = 0): 
     rs(rs), ready(ready), val(val) {}
+  void clear() {
+    ready = false;
+    val = 0;
+    rs.clear();
+  }
 };
 
 class ReorderBuffer {
+  friend void run_ROB();
+
   private:  
     queue<ROB_node> preROB, nexROB;
 
@@ -290,6 +347,11 @@ class ReorderBuffer {
     ROB_node & operator [] (int pos) { 
       return preROB[pos];
     }
+
+    void clear() {
+      preROB.clear();
+      nexROB.clear();
+    }
 };
 
 void update(); 
@@ -302,28 +364,6 @@ ReorderBuffer ROB;
 
 bool issue_flag = false, issue_flag_nex = false;
 bool issue_to_rs = false, issue_to_slb = false;
-
-struct Info {
-  bool hasres;
-  int pos;
-  uint val;
-  RS_node node;
-
-  Info(bool hasres = 0, int pos = 0, uint val = 0):
-    hasres(hasres), pos(pos), val(val) {}
-
-  inline void clear() {
-    hasres = pos = val = 0;
-    node.clear();
-  }
-  void excute() {
-    // excute ins这条指令, 将答案存储在val中
-    node.ins.doit(val, node.V1, node.V2);
-  }
-};
-
-Info preEXres, curEXres, preSLBres, curSLBres;
-Info curEX, nexEX;
 
 inline uint getcommand(int pos) {
   return (uint) mem[pos] | ((uint) mem[pos + 1] << 8) | ((uint) mem[pos + 2] << 16) | ((uint) mem[pos + 3] << 24);
@@ -351,6 +391,9 @@ void run_InstructionQueue() {
     } else {
       ins.predict_pc = pc + 4;
     }
+    // 此处跳转到预测pc的位置
+    next_pc = ins.predict_pc;
+
     nexIQ.push(ins);
   }
 }
@@ -365,10 +408,17 @@ void Issue() {
     assert(!preIQ.isempty());
 
     Instruction ins = preIQ.front();
-    int id = ROB.getpos(); // ROB中要插入的位置
+    
+    int id = ROB.getpos(); // ROB中要插入的位置来作为regState[rd]的id
+  # ifdef Debug
+    // debug(issue_flag);
+    printf("issue instruct: "); 
+    ins.print();
+    printf("put it to ROB: %d\n", id);
+  # endif
 
     // 指令插入SLbuffer 或者 RS中
-    // 2. 在本次作业中，我们认为相应寄存器的值已在ROB中存储但尚未commit的情况是可以直接获得的，即你需要实现这个功能
+    // 在本次作业中，我们认为相应寄存器的值已在ROB中存储但尚未commit的情况是可以直接获得的，即你需要实现这个功能
 
     int Q1 = 0, Q2 = 0, V1 = 0, V2 = 0;
     {
@@ -399,9 +449,8 @@ void Issue() {
       
       // true表示busy, target = -1表示没有目标寄存器, 为branch指令
       Issue_ins = RS_node(true, Q1, Q2, V1, V2, ins, (~ins.rd) ? id : -1); 
-
       
-      if(9 <= ins.typ && ins.typ <= 11 || 13 <= ins.typ && ins.typ <= 17) {
+      if((9 <= ins.typ && ins.typ <= 11) || (13 <= ins.typ && ins.typ <= 17)) {
       // load / stroe 指令
         issue_to_slb = 1;
         // SLB.insert(tmp);
@@ -422,11 +471,16 @@ void run_ReservationStation() {
     nexEX.node = Issue_ins;
     nexEX.pos = Issue_ins.target;
   } else {
-    if(issue_to_rs) 
+    if(issue_to_rs) {
       RS.insert(Issue_ins);
+    }
 
     if(RS.canEX()) { 
       // 下一个周期做 RS.EXnode;
+    # ifdef Debug
+      // cerr 
+    # endif
+    
       nexEX.hasres = true;
       nexEX.node = RS.EXnode;
       nexEX.pos = RS.EXnode.target;
@@ -434,6 +488,11 @@ void run_ReservationStation() {
       nexEX.hasres = false; // 没有指令可以执行
     }
   }
+  # ifdef Debug
+    cout << clk << ' ' << nexEX.hasres << endl;
+    cout << issue_to_rs << endl;
+  # endif
+  
 
   if(preEXres.hasres) { // 根据Excute的结果来修改RS_nex的值
     RS.modify(preEXres.pos, preEXres.val);
@@ -446,6 +505,10 @@ void run_ReservationStation() {
 void EX() {
   // 将当前处理好的指令存在val中, 并且存储EXres
   if(curEX.hasres) { // 当先存在可执行命令
+  # ifdef Debug
+    cout << "current Excute: "; curEX.node.ins.print();
+  # endif
+
     curEX.excute(); 
     
     curEXres.hasres = true;
@@ -459,9 +522,9 @@ void EX() {
 void run_SLBuffer() {
   if(issue_to_slb) {
     SLB_node tmp = SLB_node(Issue_ins, false); // 还没有commit
-    if(SLB.empty() && tmp.node.ready()) {
-      ++tmp.cnt;
-    }
+    // if(SLB.empty() && tmp.node.ready()) {
+    //   ++tmp.cnt;
+    // }
     SLB.insert(tmp);
   }
   if(!SLB.empty()) {
@@ -479,10 +542,17 @@ void run_SLBuffer() {
 
 void run_ROB() {
   if(ROB.isfull()) issue_flag_nex = false;
-  if(ROB.can_commit()) {
-    
+  if(!ROB.preROB.isempty()) {
+    ROB_node & front = ROB.preROB.getfront();
+    if(front.ready) {
+      nexCommit.hasres = true;
+      nexCommit.pos = front.rs.target;
+      nexCommit.node = front.rs;
+      nexCommit.val = front.val;
+    } else {
+      nexCommit.hasres = false;
+    }
   }
-
   if(preEXres.hasres) {
     ROB.modify(preEXres.pos, preEXres.val);
   }
@@ -490,13 +560,49 @@ void run_ROB() {
     ROB.modify(preSLBres.pos, preSLBres.val);
   }
 }
+void CLEAR();
 void Commit() {
-  
+  if(curCommit.hasres) {
+    Instruction ins = curCommit.node.ins;
+    if(ins.fetch == 0x0ff00513) {
+      print(reg[0] & 255u);
+      exit(0);
+    }
+    if(ins.typ == JALR || (ins.typ >= 3 && ins.typ <= 8)) { 
+      // 分支预测指令: JALR 或者 branch指令
+      bool predict_res = true;
+      if(ins.typ == JALR) {
+        predict_res = false;
+      } else if(ins.npc != ins.predict_pc) {
+        predict_res = false;
+      }
+
+      if(predict_res == false) {
+        CLEAR();
+        next_pc = ins.npc;
+      }
+    } else {
+      // 其他指令
+      if(~curCommit.node.ins.rd) {
+        reg.modify_value(curCommit.node.ins.rd, curCommit.pos, curCommit.val);
+      }
+      if(ins.typ == SW || ins.typ == SH || ins.typ == SB) {// store指令 
+        SLB.can_commit();
+        // assert();
+      }
+    }
+  }
 }
 
 int main() {
   input();
+
   while(true) {
+    ++clk;
+    # ifdef Debug
+      printf("==== cycle %d: begin ====\n", clk);
+    # endif
+
     update();
 
     run_InstructionQueue();
@@ -508,7 +614,11 @@ int main() {
 
     run_ROB();
     Commit();
-    exit(0);
+
+    # ifdef Debug
+      puts("");
+    # endif
+    // exit(0);
   }
   return 0;
 }
@@ -520,10 +630,24 @@ void update() {
   preEXres = curEXres, curEXres.clear();
   preSLBres = curSLBres, curSLBres.clear();
   curEX = nexEX, nexEX.clear();
+  curCommit = nexCommit, nexCommit.clear();
 
   reg.update();
   preIQ = nexIQ; // Instruction Queue
   RS.update(); // Resevation Station
   SLB.update();
   ROB.update();
+}
+
+void CLEAR() {
+  preEXres.clear(), curEXres.clear();
+  preSLBres.clear(), curSLBres.clear();
+  curEX.clear(), nexEX.clear();
+  curCommit.clear(), nexCommit.clear();
+
+  reg.clear();
+  preIQ.clear(), nexIQ.clear();
+  RS.clear();
+  SLB.clear();
+  ROB.clear();
 }
