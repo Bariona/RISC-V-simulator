@@ -73,17 +73,26 @@ class Registerfile{
 
 struct RS_node {
   bool busy; // check当前节点是否已经excute完毕 1: 表示还未执行完毕
-  int Q1, Q2;
+  int Q1, Q2, target;
   uint V1, V2;
+  Instruction ins;
 
-  RS_node(bool busy = 0, int Q1 = 0, int Q2 = 0, uint V1 = 0, uint V2 = 0):
-    busy(busy), Q1(Q1), Q2(Q2), V1(V1), V2(V2) {}
+  RS_node() {
+    busy = 0;
+    Q1 = Q2 = V1 = V2 = 0;
+  }
+  RS_node(bool busy, int Q1, int Q2, uint V1, uint V2, Instruction ins, int target):
+    busy(busy), Q1(Q1), Q2(Q2), V1(V1), V2(V2), ins(ins), target(target) {}
   
   inline bool ready() { // ready 来执行的状态
     return !Q1 && !Q2; 
   }
   inline void clear() { 
     busy = Q1 = Q2 = V1 = V2 = 0; 
+  }
+  void modify(int id, uint val) {
+    if(Q1 == id) V1 = val;
+    if(Q2 == id) V2 = val;
   }
 };
 
@@ -105,9 +114,10 @@ class ReservationStation { // 保留站实现
   };
   
   RSbuffer pre, nex; // 创建两个版本的RS
-  RS_node EXnode;
 
-  public:
+  public: 
+    RS_node EXnode;
+
     void update() { 
       pre = nex; 
     }
@@ -122,6 +132,7 @@ class ReservationStation { // 保留站实现
       }
       return false;
     }
+
     // insert,remove都是对nex进行操作
     void insert(const RS_node x) { 
       nex.a[nex.head] = x;
@@ -131,6 +142,12 @@ class ReservationStation { // 保留站实现
       nex.a[pos].clear();
       nex.next[pos] = nex.head;
       nex.head = pos;
+    }
+
+    void modify(int id, uint val) {// 根据Ex/SLB的结果修改RS的值
+      for(int i = 0; i < SIZE; ++i) {
+        nex.a[i].modify(id, val); // 以此check是否能够修改
+      }
     }
 };
 
@@ -191,6 +208,28 @@ ReorderBuffer ROB;
 bool issue_flag = false, issue_flag_nex = false;
 bool issue_to_rs = false, issue_to_slb = false;
 
+struct Info {
+  bool hasres;
+  int pos;
+  uint val;
+  RS_node node;
+
+  Info(bool hasres = 0, int pos = 0, uint val = 0):
+    hasres(hasres), pos(pos), val(val) {}
+
+  inline void clear() {
+    hasres = pos = val = 0;
+    node.clear();
+  }
+  void excute() {
+    // excute ins这条指令, 将答案存储在val中
+    node.ins.doit(val, node.V1, node.V2);
+  }
+};
+
+Info preEXres, curEXres, preSLBres, curSLBres;
+Info curEX, nexEX;
+
 inline uint getcommand(int pos) {
   return (uint) mem[pos] | ((uint) mem[pos + 1] << 8) | ((uint) mem[pos + 2] << 16) | ((uint) mem[pos + 3] << 24);
 }
@@ -204,16 +243,18 @@ void run_InstructionQueue() {
   // 判断现在是否可以再从内存中获取一条指令
   if(!nexIQ.isfull()) { 
     uint fet = getcommand(pc);
-    Instruction ins; 
+    Instruction ins;
+
     ins.decode(fet);
     ins.pc = pc;
+
     if(ins.typ == JAL) { // JAL
-      ins.npc = pc + ins.imm;
+      ins.predict_pc = pc + ins.imm;
     } else if((fet & 0x7f) == 0b1100011) { // B-type
       // to: branch predict 
-      ins.npc = pc + 4; // 默认不跳转
+      ins.predict_pc = pc + 4; // 默认不跳转
     } else {
-      ins.npc = pc + 4;
+      ins.predict_pc = pc + 4;
     }
     nexIQ.push(ins);
   }
@@ -251,9 +292,12 @@ void Issue() {
           V2 = 0;
         }
       }
-      if(~ins.rd) // 修改目标寄存器 reg[rd] 的 State 状态, 改为id
+      if(~ins.rd) { // 修改目标寄存器 reg[rd] 的 State 状态, 改为id
         reg.modify_state(ins.rd, id); 
-      tmp = RS_node(true, Q1, Q2, V1, V2); // true表示busy
+      }
+      
+      // true表示busy, target = -1表示没有目标寄存器, 为branch指令
+      Issue_ins = RS_node(true, Q1, Q2, V1, V2, ins, (~ins.rd) ? id : -1); 
 
       issue_to_rs = issue_to_slb = false;
       if(9 <= ins.typ && ins.typ <= 11 || 13 <= ins.typ && ins.typ <= 17) {
@@ -265,18 +309,54 @@ void Issue() {
         // 发送给RS RS.insert(tmp);
       }
     }
+
     // 指令插入到ROB中
-    ROB.insert(ROB_node(tmp));
+    ROB.insert(ROB_node(Issue_ins));
   }
 }
 
 void run_ReservationStation() {
-  if(issue_to_rs && )
+  if(issue_to_rs && Issue_ins.ready()) {
+    // 下一个周期做 Issue_ins, 存储在curEX中
+    curEX.hasres = 1; 
+    curEX.node = Issue_ins;
+    curEX.pos = Issue_ins.target;
+  } else {
+    RS.insert(Issue_ins);
+    if(RS.canEX()) {
+      // 下一个周期做 RS.EXnode;
+      curEX.hasres = 1;
+      curEX.node = RS.EXnode;
+      curEX.pos = RS.EXnode.target;
+    }
+  }
+
+  if(preEXres.hasres) { // 根据Excute的结果来修改RS_nex的值
+    RS.modify(preEXres.pos, preEXres.val);
+  }
+  if(preSLBres.hasres) { // 根据SLBuffer的结果来修改RS_nex的值
+    RS.modify(preSLBres.pos, preSLBres.val);
+  }
+}
+
+void EX() {
+  // 将当前处理好的指令存在val中, 并且存储EXres
+  if(curEX.hasres) { // 当先存在可执行命令
+    curEX.excute(); 
+    
+    curEXres.hasres = true;
+    curEXres.val = curEX.val;
+    curEXres.pos = curEX.pos;
+  } else { // 当前没有要excute的指令
+    curEXres.hasres = false;
+  }
 }
 
 void run_SLBuffer() {
 
 }
+
+
 
 int main() {
   input();
@@ -288,6 +368,7 @@ int main() {
     
     run_ReservationStation();
     run_SLBuffer();
+    EX();
 
     exit(0);
   }
@@ -298,6 +379,10 @@ void update() {
   pc = next_pc;
   issue_flag = issue_flag_nex;
   issue_flag_nex = true;
+
+  preEXres = curEXres; curEXres.clear();
+  preSLBres = curSLBres; curSLBres.clear();
+  curEX = nexEX, nexEX.clear();
 
   reg.update();
   preIQ = nexIQ; // Instruction Queue

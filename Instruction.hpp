@@ -13,15 +13,25 @@ enum Instype {
   ADD, SUB, SLL, SLT, SLTU, XOR, SRL, SRA, OR, AND, // R [27, 26]
   ERROR
 };
+
 struct Instruction {
   Instype typ;
   uint imm;
+	int pc, npc, predict_pc;
   int rs1, rs2, rd, shamt;
-  Instruction() { typ = ERROR, rs1 = rs2 = rd = shamt = 0, imm = 0u; }
+  
+	Instruction() { 
+    typ = ERROR;
+    rs1 = rs2 = rd = shamt = 0;
+    imm = 0u; 
+  }
   Instruction(Instype typ, uint imm, int rs1, int rs2, int rd, int shamt):
     typ(typ), imm(imm), rs1(rs1), rs2(rs2), rd(rd), shamt(shamt) {}
 
   void decode(uint fet) {
+		typ = ERROR;
+		rs1 = rs2 = rd = shamt = -1;
+		imm = 0u;
     switch(fet & 0x7f) {
       case 0x37: { // U lui
         typ = LUI;
@@ -129,6 +139,54 @@ struct Instruction {
       default: assert(0); 
     }
   }
+  void doit(uint &reg_rd, uint reg1, uint reg2) {
+    switch(typ) {
+      // ---- U ----
+      case LUI: reg_rd = imm; break;
+      case AUIPC: reg_rd = pc + imm; break;
+      case JAL: reg_rd = pc + 4, npc = pc + imm; break;
+      // ---- B ----
+      case BEQ: npc = (reg1 == reg2) ? pc + imm : pc + 4; break; 
+      case BNE: npc = (reg1 != reg2) ? pc + imm : pc + 4; break;
+      case BLT: npc = ((int) reg1 < (int) reg2) ? pc + imm : pc + 4; break;
+      case BGE: npc = ((int) reg1 >= (int) reg2) ? pc + imm : pc + 4; break;
+      case BLTU: npc = (reg1 < reg2) ? pc + imm : pc + 4; break;
+      case BGEU: npc = (reg1 >= reg2) ? pc + imm ? pc + 4; break;
+      // ---- S ----
+      case SB: 
+      case SH: 
+      case SW: assert(0); break;
+      // ---- I ----
+      case JALR: npc = (reg1 + imm) & ~1, reg_rd = pc + 4; break;
+      case LB: 
+      case LH: 
+      case LW: 
+      case LBU:
+      case LHU: assert(0); break;
+      case ADDI: reg_rd = reg1 + imm; break;
+      case SLTI: reg_rd = (int) reg1 < (int) imm; break;
+      case SLTIU: reg_rd = reg1 < imm; break;
+      case XORI: reg_rd = reg1 ^ imm; break;
+      case ORI: reg_rd = reg1 | imm; break;
+      case ANDI: reg_rd = reg1 & imm; break;
+      case SLLI: reg_rd = reg1 << shamt; break; 
+      case SRLI: reg_rd = reg1 >> shamt; break;
+      case SRAI: reg_rd = (int) reg1 >> (int) shamt; break;
+      // ---- R ----
+      case ADD: reg_rd = reg1 + reg2; break;
+      case SUB: reg_rd = reg1 - reg2; break;
+      case SLL: reg_rd = reg1 << reg2; break;
+      case SLT: reg_rd = (int) reg1 < (int) reg2; break;
+      case SLTU: reg_rd = reg1 < reg2; break;
+      case XOR: reg_rd = reg1 ^ reg2; break;
+      case SRL: reg_rd = reg1 >> reg2; break;
+      case SRA: reg_rd = (int) reg1 >> (int) reg2; break;
+      case OR: reg_rd = reg1 | reg2; break;
+      case AND: reg_rd = reg1 & reg2; break;
+      default: assert(0);
+    }
+  }
+
   inline void print() {
     switch(typ) {
 			case 0: puts("LUI"); break;
@@ -172,6 +230,5 @@ struct Instruction {
   	}
 	}
 };
-
 
 #endif
