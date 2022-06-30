@@ -56,7 +56,7 @@ class Registerfile{
         memset(regState, 0, sizeof regState);
       }
       void print() {
-        int up = 14;
+        int up = 16;
         printf("id: ");
         for(int i = 0; i < up; ++i)
           printf("%4d ", i); 
@@ -89,13 +89,14 @@ class Registerfile{
       return preReg.regState[pos];
     }
     inline void modify_state(int pos, int k) { // modify 都要对nexReg进行修改
-      if(pos) nexReg.regState[pos] = k;
+      if(!pos) return ;
+      nexReg.regState[pos] = k;
     }
     inline void modify_value(int pos, int state, uint k) {
       // 需要当前reg[pos]的State与commit的指令编号相同才行!
 
     // assert(state == nexReg.regState[pos]);
-    if(!pos) return ;
+      if(!pos) return ;
       nexReg.reg[pos] = k;
       if(state == nexReg.regState[pos]) {
         nexReg.regState[pos] = 0;
@@ -132,9 +133,7 @@ struct RS_node {
     busy = false;
     Q1 = Q2 = V1 = V2 = 0; 
   }
-  void modify(int id, uint val, int npc = -1) {
-    if(~npc) 
-      ins.npc = npc;
+  void modify(int id, uint val) {
     if(Q1 == id) {
       V1 = val;
       Q1 = 0;
@@ -242,9 +241,9 @@ class ReservationStation { // 保留站实现
       nex.head = pos;
     }
 
-    void modify(int id, uint val, int npc) {// 根据Ex/SLB的结果修改RS的值
+    void modify(int id, uint val) {// 根据Ex/SLB的结果修改RS的值
       for(int i = 0; i < SIZE; ++i) {
-        nex.a[i].modify(id, val, npc); // 以此check是否能够修改
+        nex.a[i].modify(id, val); // 以此check是否能够修改
       }
     }
     void clear() {
@@ -421,19 +420,19 @@ class ReorderBuffer {
     void pop() {
       nexROB.pop();
     }
-    void modify(int id, uint val, int npc) {
+    void modify(int id, Info &info) {
       if(!(id >= 1 && id <= 32)) {
-        cout << id << ' ' << val << ' ' << npc << endl;
+        cout << id << ' ' << info.val << ' ' << info.node.ins.npc << endl;
         assert(0);
       }
+      // if(id == 19) {
+      //   cout << val << ' ' << npc << endl;
+      //   exit(0);
+      // }
       // assert(id >= 1 && id <= 32);
-      for(int i = 1; i <= SIZE; ++i)
-        if(nexROB[i].rs.ID == id) {
-          nexROB[i].val = val;
-          nexROB[i].ready = true;
-          nexROB[i].rs.ins.npc = npc;
-        }
-      // 有问题!!
+      nexROB[id].val = info.val;
+      nexROB[id].ready = true;
+      nexROB[id].rs = info.node;
     }
     ROB_node & operator [] (int pos) { 
       return preROB[pos];
@@ -591,11 +590,11 @@ void run_ReservationStation() {
   # endif
   
   if(preEXres.hasres) { // 根据Excute的结果来修改RS_nex的值
-    RS.modify(preEXres.id, preEXres.val, preEXres.node.ins.npc);
+    RS.modify(preEXres.id, preEXres.val);
   }
   if(preSLBres.hasres) { // 根据SLBuffer的结果来修改RS_nex的值
     //assert(preSLBres.id != 4);
-    RS.modify(preSLBres.id, preSLBres.val, preSLBres.node.ins.npc);
+    RS.modify(preSLBres.id, preSLBres.val);
   }
 }
 
@@ -663,10 +662,10 @@ void run_ROB() {
     //   cout << preEXres.val << endl;
     //   exit(0);
     // }
-    ROB.modify(preEXres.id, preEXres.val, preEXres.node.ins.npc);
+    ROB.modify(preEXres.id, preEXres);
   }
   if(preSLBres.hasres) {
-    ROB.modify(preSLBres.id, preSLBres.val, preSLBres.node.ins.npc);
+    ROB.modify(preSLBres.id, preSLBres);
   }
 }
 
@@ -683,11 +682,11 @@ void Commit() {
     # ifdef Debug
       cout << "\033[34;1m Commit: \033[0m"; curCommit.node.print();
     # endif
-
+    // ins.println();
     if(ins.typ == JALR || (ins.typ >= 3 && ins.typ <= 8)) { 
       // 分支预测指令: JALR 或者 branch指令
       
-      // if(ins.typ == JALR) {
+      // if(ins.typ == BLTU) {
       //   cout << "NPC : " << ins.npc << ' ' << ins.predict_pc << endl;
       // }
 
@@ -759,9 +758,9 @@ int main() {
       reg.print();
       puts("");
     # endif
-    // if(clk == 24)
+    // if(clk == 30)
     //   cout << next_pc << endl;
-    // if(clk == 85)
+    // if(clk == 45)
     //   exit(0);
   }
   return 0;

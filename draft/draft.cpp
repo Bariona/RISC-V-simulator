@@ -230,7 +230,7 @@ void EX() {
   
   int p0 = pc - 4;
   // printf("pc = %4d, %02x%02x%02x%02x\t", pc - 4, mem[pc - 1], mem[pc - 2], mem[pc - 3], mem[pc - 4]);
-  // print(typ);
+  print(typ);
   // cout << "rs1= " << rs1 << " rs2=" << rs2 << " rd=" << rd << ' ' << imm << endl;
   if(fet == 0x0ff00513) {
     printf("%u\n", rg[10] & 255u);
@@ -245,7 +245,10 @@ void EX() {
     case BNE: if(rg[rs1] != rg[rs2]) pc = p0 + imm; break;
     case BLT: if((int) rg[rs1] < (int) rg[rs2]) pc = p0 + imm; break;
     case BGE: if((int) rg[rs1] >= (int) rg[rs2]) pc = p0 + imm; break;
-    case BLTU: if(rg[rs1] < rg[rs2]) pc = p0 + imm; break;
+    case BLTU: {
+      cout << rg[rs1] << ' ' << rg[rs2] << endl;
+      if(rg[rs1] < rg[rs2]) pc = p0 + imm; break;
+    }
     case BGEU: if(rg[rs1] >= rg[rs2]) pc = p0 + imm; break;
     // ---- S ----
             // imm要转化成int类型！
