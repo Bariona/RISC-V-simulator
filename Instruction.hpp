@@ -1,8 +1,12 @@
 # ifndef INS
 # define INS
 
+#include <iostream>
 #include <assert.h>
+
 typedef unsigned int uint;
+
+// # define Debug
 
 enum Instype {
   LUI, AUIPC, // U [0, 1]
@@ -16,7 +20,7 @@ enum Instype {
 
 struct Instruction {
   Instype typ;
-  uint imm;
+  uint imm, fetch;
 	int pc, npc, predict_pc;
   int rs1, rs2, rd, shamt;
   
@@ -27,8 +31,14 @@ struct Instruction {
   }
   Instruction(Instype typ, uint imm, int rs1, int rs2, int rd, int shamt):
     typ(typ), imm(imm), rs1(rs1), rs2(rs2), rd(rd), shamt(shamt) {}
-
+  
+  void clear() {
+    typ = ERROR;
+    rs1 = rs2 = rd = shamt = 0;
+    imm = 0u; 
+  }
   void decode(uint fet) {
+    fetch = fet;
 		typ = ERROR;
 		rs1 = rs2 = rd = shamt = -1;
 		imm = 0u;
@@ -136,10 +146,17 @@ struct Instruction {
         }
         break;
       }
-      default: assert(0); 
+      default: ERROR; 
+    }
+
+    if(typ == SLLI || typ == SRLI || typ == SRAI) {
+      shamt = imm;
+      if(typ == SRAI)
+        shamt ^= 1 << 10;
     }
   }
   void doit(uint &reg_rd, uint reg1, uint reg2) {
+    npc = -1;
     switch(typ) {
       // ---- U ----
       case LUI: reg_rd = imm; break;
@@ -151,25 +168,33 @@ struct Instruction {
       case BLT: npc = ((int) reg1 < (int) reg2) ? pc + imm : pc + 4; break;
       case BGE: npc = ((int) reg1 >= (int) reg2) ? pc + imm : pc + 4; break;
       case BLTU: npc = (reg1 < reg2) ? pc + imm : pc + 4; break;
-      case BGEU: npc = (reg1 >= reg2) ? pc + imm ? pc + 4; break;
+      case BGEU: npc = (reg1 >= reg2) ? pc + imm : pc + 4; break;
       // ---- S ----
+      // store
       case SB: 
       case SH: 
-      case SW: assert(0); break;
+      case SW: reg_rd = reg1 + imm; break;
       // ---- I ----
       case JALR: npc = (reg1 + imm) & ~1, reg_rd = pc + 4; break;
+
+      // load
       case LB: 
       case LH: 
       case LW: 
       case LBU:
-      case LHU: assert(0); break;
+      case LHU: reg_rd = reg1 + imm; break;
+
       case ADDI: reg_rd = reg1 + imm; break;
       case SLTI: reg_rd = (int) reg1 < (int) imm; break;
       case SLTIU: reg_rd = reg1 < imm; break;
       case XORI: reg_rd = reg1 ^ imm; break;
       case ORI: reg_rd = reg1 | imm; break;
       case ANDI: reg_rd = reg1 & imm; break;
-      case SLLI: reg_rd = reg1 << shamt; break; 
+      case SLLI: {
+        // if(rd == 13)
+        //   std :: cout << reg1 << ' ' << shamt << std :: endl, exit(0);
+        reg_rd = reg1 << shamt; break; 
+      }
       case SRLI: reg_rd = reg1 >> shamt; break;
       case SRAI: reg_rd = (int) reg1 >> (int) shamt; break;
       // ---- R ----
@@ -183,52 +208,59 @@ struct Instruction {
       case SRA: reg_rd = (int) reg1 >> (int) reg2; break;
       case OR: reg_rd = reg1 | reg2; break;
       case AND: reg_rd = reg1 & reg2; break;
-      default: assert(0);
+      default: {
+        print();
+        std :: cout << rs1 << ' ' << rs2 << ' ' << rd << ' ' << std :: endl ;
+        assert(0);
+      }
     }
   }
 
   inline void print() {
     switch(typ) {
-			case 0: puts("LUI"); break;
-			case 1: puts("AUIPC"); break;
-			case 2: puts("JAL"); break;
-			case 3: puts("BEQ"); break;
-			case 4: puts("BNE"); break;
-			case 5: puts("BLT"); break;
-			case 6: puts("BGE"); break;
-			case 7: puts("BLTU"); break;
-			case 8: puts("BGEU"); break;
-			case 9: puts("SB"); break;
-			case 10: puts("SH"); break;
-			case 11: puts("SW"); break;
-			case 12: puts("JALR"); break;
-			case 13: puts("LB"); break;
-			case 14: puts("LH"); break;
-			case 15: puts("LW"); break;
-			case 16: puts("LBU"); break;
-			case 17: puts("LHU"); break;
-			case 18: puts("ADDI"); break;
-			case 19: puts("SLTI"); break;
-			case 20: puts("SLTIU"); break;
-			case 21: puts("XORI"); break;
-			case 22: puts("ORI"); break;
-			case 23: puts("ANDI"); break;
-			case 24: puts("SLLI"); break;
-			case 25: puts("SRLI"); break;
-			case 26: puts("SRAI"); break;
-			case 27: puts("ADD"); break;
-			case 28: puts("SUB"); break;
-			case 29: puts("SLL"); break;
-			case 30: puts("SLT"); break;
-			case 31: puts("SLTU"); break;
-			case 32: puts("XOR"); break;
-			case 33: puts("SRL"); break;
-			case 34: puts("SRA"); break;
-			case 35: puts("OR"); break;
-			case 36: puts("AND"); break;
-			default: puts("ERROR");
+			case 0: std :: cout << "LUI" ; break;
+			case 1: std :: cout << "AUIPC" ; break;
+			case 2: std :: cout << "JAL" ; break;
+			case 3: std :: cout << "BEQ" ; break;
+			case 4: std :: cout << "BNE" ; break;
+			case 5: std :: cout << "BLT" ; break;
+			case 6: std :: cout << "BGE" ; break;
+			case 7: std :: cout << "BLTU" ; break;
+			case 8: std :: cout << "BGEU" ; break;
+			case 9: std :: cout << "SB" ; break;
+			case 10: std :: cout << "SH" ; break;
+			case 11: std :: cout << "SW" ; break;
+			case 12: std :: cout << "JALR" ; break;
+			case 13: std :: cout << "LB" ; break;
+			case 14: std :: cout << "LH" ; break;
+			case 15: std :: cout << "LW" ; break;
+			case 16: std :: cout << "LBU" ; break;
+			case 17: std :: cout << "LHU" ; break;
+			case 18: std :: cout << "ADDI" ; break;
+			case 19: std :: cout << "SLTI" ; break;
+			case 20: std :: cout << "SLTIU" ; break;
+			case 21: std :: cout << "XORI" ; break;
+			case 22: std :: cout << "ORI" ; break;
+			case 23: std :: cout << "ANDI" ; break;
+			case 24: std :: cout << "SLLI" ; break;
+			case 25: std :: cout << "SRLI" ; break;
+			case 26: std :: cout << "SRAI" ; break;
+			case 27: std :: cout << "ADD" ; break;
+			case 28: std :: cout << "SUB" ; break;
+			case 29: std :: cout << "SLL" ; break;
+			case 30: std :: cout << "SLT" ; break;
+			case 31: std :: cout << "SLTU" ; break;
+			case 32: std :: cout << "XOR" ; break;
+			case 33: std :: cout << "SRL" ; break;
+			case 34: std :: cout << "SRA" ; break;
+			case 35: std :: cout << "OR" ; break;
+			case 36: std :: cout << "AND" ; break;
+			default: std :: cout << "ERROR" ;
   	}
 	}
+  inline void println() {
+    print(); puts("");
+  }
 };
 
 #endif

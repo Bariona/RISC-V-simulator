@@ -9,7 +9,7 @@ typedef unsigned int uint;
 # define debug(x) std :: cout << #x << ": " << (x) << std :: endl;
 # define RED "/033[0;32;31m"
 
-// # define Debug
+# define Debug
 
 const int SIZE = 32;
 
@@ -55,19 +55,19 @@ class Registerfile{
         memset(regState, 0, sizeof regState);
       }
       void print() {
-        int up = 14;
+        int up = 20;
         printf("id: ");
         for(int i = 0; i < up; ++i)
-          printf("%4d ", i); 
+          printf("%2d ", i); 
         puts("");
         printf("val:");
         for(int i = 0; i < up; ++i) {
-          printf("%4u ", reg[i]);
+          printf("%2d ", reg[i]);
         }
         puts("");
         printf("sta:");
         for(int i = 0; i < up; ++i)
-          printf("%4d ", regState[i]); 
+          printf("%2d ", regState[i]); 
         puts("");
       }
     };
@@ -94,9 +94,9 @@ class Registerfile{
       // 需要当前reg[pos]的State与commit的指令编号相同才行!
 
     // assert(state == nexReg.regState[pos]);
-      nexReg.reg[pos] = k;
       if(state == nexReg.regState[pos]) {
         nexReg.regState[pos] = 0;
+        nexReg.reg[pos] = k;
       }
     }
     void clear() {
@@ -161,9 +161,9 @@ struct Info {
     // excute ins这条指令, 将答案存储在val中
     
     node.ins.doit(val, node.V1, node.V2);
-    // if(node.ID == 13) {
+    // if(node.ins.typ == JALR) {
     //   cout << node.ins.rs1 << ' ' << node.V1 << ' ' << node.V2 << ' ' << node.ins.imm << endl;
-    //   cout << val << ' ' << node.ins.npc << endl;
+    //   cout << node.ins.npc << endl;
     //   exit(0);
     // }
   }
@@ -646,14 +646,14 @@ void run_ROB() {
     SLB.ROB_top_id = front.rs.ID; // 给SLB判断是否是store/load为队列头元素
 
     if(front.ready) {
-      curCommit.hasres = true;
-      curCommit.id = front.rs.ID;
-      curCommit.node = front.rs;
-      curCommit.val = front.val;
+      nexCommit.hasres = true;
+      nexCommit.id = front.rs.ID;
+      nexCommit.node = front.rs;
+      nexCommit.val = front.val;
       
       ROB.pop();
     } else {
-      curCommit.hasres = false;
+      nexCommit.hasres = false;
     }
   }
   if(preEXres.hasres) {
@@ -707,10 +707,6 @@ void Commit() {
         meet_JALR = false;
     } else {
       // 其他指令
-      // if(curCommit.node.ID == 13) {
-      //   cout << curCommit.val << endl;
-      //   exit(0);
-      // }
       if(~curCommit.node.ins.rd) {
         // if(curCommit.node.ins.rd > 10) {
         //   cout << curCommit.node.ins.rd << ' ' << curCommit.id << ' ' << curCommit.val << endl;
@@ -727,7 +723,7 @@ void Commit() {
 }
 
 int main() {
-  freopen("testcases/array_test1.data", "r", stdin);
+  freopen("testcases/lvalue2.data", "r", stdin);
   input();
 
   while(true) {
@@ -759,8 +755,8 @@ int main() {
     # endif
     // if(clk == 24)
     //   cout << next_pc << endl;
-    // if(clk == 85)
-    //   exit(0);
+    if(clk == 60)
+      exit(0);
   }
   return 0;
 }
@@ -772,7 +768,7 @@ void update() {
   preEXres = curEXres, curEXres.clear();
   preSLBres = curSLBres, curSLBres.clear();
   curEX = nexEX, nexEX.clear();
-  //curCommit = nexCommit, nexCommit.clear();
+  curCommit = nexCommit, nexCommit.clear();
 
   reg.update();
   preIQ = nexIQ; // Instruction Queue
