@@ -1,3 +1,4 @@
+%:pragma GCC optimize(2)
 #include "queue.hpp"
 #include "Instruction.hpp"
 
@@ -88,12 +89,13 @@ class Registerfile{
       return preReg.regState[pos];
     }
     inline void modify_state(int pos, int k) { // modify 都要对nexReg进行修改
-      nexReg.regState[pos] = k;
+      if(pos) nexReg.regState[pos] = k;
     }
     inline void modify_value(int pos, int state, uint k) {
       // 需要当前reg[pos]的State与commit的指令编号相同才行!
 
     // assert(state == nexReg.regState[pos]);
+    if(!pos) return ;
       nexReg.reg[pos] = k;
       if(state == nexReg.regState[pos]) {
         nexReg.regState[pos] = 0;

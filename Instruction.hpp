@@ -148,7 +148,7 @@ struct Instruction {
       }
       default: ERROR; 
     }
-
+    
     if(typ == SLLI || typ == SRLI || typ == SRAI) {
       shamt = imm;
       if(typ == SRAI)

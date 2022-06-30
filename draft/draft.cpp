@@ -229,9 +229,9 @@ void ID() {
 void EX() {
   
   int p0 = pc - 4;
-  printf("pc = %4d, %02x%02x%02x%02x\t", pc - 4, mem[pc - 1], mem[pc - 2], mem[pc - 3], mem[pc - 4]);
-  print(typ);
-  cout << "rs1= " << rs1 << " rs2=" << rs2 << " rd=" << rd << ' ' << imm << endl;
+  // printf("pc = %4d, %02x%02x%02x%02x\t", pc - 4, mem[pc - 1], mem[pc - 2], mem[pc - 3], mem[pc - 4]);
+  // print(typ);
+  // cout << "rs1= " << rs1 << " rs2=" << rs2 << " rd=" << rd << ' ' << imm << endl;
   if(fet == 0x0ff00513) {
     printf("%u\n", rg[10] & 255u);
     exit(0);
@@ -253,7 +253,7 @@ void EX() {
     case SH: *(unsigned short *)(mem + int(rg[rs1] + imm)) = (unsigned short) rg[rs2]; break; // [15:0]
     case SW: *(unsigned int *)(mem + int(rg[rs1] + imm)) = rg[rs2]; break;
     // ---- I ----
-    case JALR: cout << "@@@@ " << rg[rs1] << ' ' << imm << ' ' << ((rg[rs1] + imm) & ~1) << endl, pc = (rg[rs1] + imm) & ~1, rg[rd] = p0 + 4; break;
+    case JALR: pc = (rg[rs1] + imm) & ~1, rg[rd] = p0 + 4; break;
     case LB: { // 符号位拓展[7:0]
       uint x = (uint) mem[rg[rs1] + imm]; 
       if(x >> 7 & 1) x |= 0xffffff00;
@@ -309,8 +309,8 @@ int main() {
     ID();
     EX();
     SET();
-    for(int i = 1; i < 20; ++i)
-      cout << rg[i] << ' '; puts("");
+    // for(int i = 1; i < 20; ++i)
+    //   cout << rg[i] << ' '; puts("");
   }
   return 0;
 }

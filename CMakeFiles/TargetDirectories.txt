@@ -1,0 +1,3 @@
+/mnt/c/Users/huawei/Desktop/Tomasulo/CMakeFiles/rebuild_cache.dir
+/mnt/c/Users/huawei/Desktop/Tomasulo/CMakeFiles/edit_cache.dir
+/mnt/c/Users/huawei/Desktop/Tomasulo/CMakeFiles/code.dir
