@@ -727,7 +727,7 @@ void Commit() {
 }
 
 int main() {
-  freopen("testcases/array_test1.data", "r", stdin);
+  // freopen("testcases/array_test1.data", "r", stdin);
   input();
 
   while(true) {
