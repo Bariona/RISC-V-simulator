@@ -1,0 +1,32 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/mnt/c/Users/huawei/Desktop/Tomasulo/Instruction.hpp
+iostream
+-
+assert.h
+-
+
+/mnt/c/Users/huawei/Desktop/Tomasulo/main.cpp
+queue.hpp
+/mnt/c/Users/huawei/Desktop/Tomasulo/queue.hpp
+Instruction.hpp
+/mnt/c/Users/huawei/Desktop/Tomasulo/Instruction.hpp
+cstdio
+-
+cstring
+-
+iostream
+-
+
+/mnt/c/Users/huawei/Desktop/Tomasulo/queue.hpp
+assert.h
+-
+iostream
+-
+
