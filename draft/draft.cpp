@@ -46,6 +46,7 @@ struct Instruction {
 } cur;
 
 inline void print(Instype x) {
+  // cout << rg[10] << ' ';
   switch(x) {
     case 0: puts("LUI"); break;
     case 1: puts("AUIPC"); break;
@@ -246,7 +247,7 @@ void EX() {
     case BLT: if((int) rg[rs1] < (int) rg[rs2]) pc = p0 + imm; break;
     case BGE: if((int) rg[rs1] >= (int) rg[rs2]) pc = p0 + imm; break;
     case BLTU: {
-      cout << rg[rs1] << ' ' << rg[rs2] << endl;
+      // cout << rg[rs1] << ' ' << rg[rs2] << endl;
       if(rg[rs1] < rg[rs2]) pc = p0 + imm; break;
     }
     case BGEU: if(rg[rs1] >= rg[rs2]) pc = p0 + imm; break;
@@ -256,7 +257,10 @@ void EX() {
     case SH: *(unsigned short *)(mem + int(rg[rs1] + imm)) = (unsigned short) rg[rs2]; break; // [15:0]
     case SW: *(unsigned int *)(mem + int(rg[rs1] + imm)) = rg[rs2]; break;
     // ---- I ----
-    case JALR: pc = (rg[rs1] + imm) & ~1, rg[rd] = p0 + 4; break;
+    case JALR: {
+      assert(rd == 0);
+      pc = (rg[rs1] + imm) & ~1, rg[rd] = p0 + 4; break;
+    }
     case LB: { // 符号位拓展[7:0]
       uint x = (uint) mem[rg[rs1] + imm]; 
       if(x >> 7 & 1) x |= 0xffffff00;
@@ -272,11 +276,14 @@ void EX() {
     case LW: { // 符号位拓展[31:0]
       int idx = rg[rs1] + imm;
       rg[rd] = (uint) mem[idx] | ((uint) mem[idx + 1] << 8) | ((uint) mem[idx + 2] << 16) | ((uint) mem[idx + 3] << 24);
+      cout << "fuck = " << idx << ' ' << (int) rg[rd] << ' ';
       break;
     }
     case LBU: rg[rd] = (uint) mem[rg[rs1] + imm]; break;
     case LHU: rg[rd] = (uint) mem[rg[rs1] + imm] | ((uint) mem[rg[rs1] + imm + 1] << 8); break;
-    case ADDI: rg[rd] = rg[rs1] + imm; break;
+    case ADDI: {
+      rg[rd] = rg[rs1] + imm; break;
+    }
     case SLTI: rg[rd] = (int) rg[rs1] < (int) imm; break;
     case SLTIU: rg[rd] = rg[rs1] < imm; break;
     case XORI: rg[rd] = rg[rs1] ^ imm; break;
@@ -312,6 +319,8 @@ int main() {
     ID();
     EX();
     SET();
+    for(int i = 1; i <= 30; ++i)
+      cout << rg[i] << ' '; puts("");
     // for(int i = 1; i < 20; ++i)
     //   cout << rg[i] << ' '; puts("");
   }

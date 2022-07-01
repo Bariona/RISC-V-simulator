@@ -46,6 +46,7 @@ void input() {
 }
 
 class Registerfile{
+  friend void Commit();
   private:
     struct Regfile {
       uint reg[32]; 
@@ -56,7 +57,7 @@ class Registerfile{
         memset(regState, 0, sizeof regState);
       }
       void print() {
-        int up = 16;
+        int up = 14;
         printf("id: ");
         for(int i = 0; i < up; ++i)
           printf("%4d ", i); 
@@ -89,14 +90,13 @@ class Registerfile{
       return preReg.regState[pos];
     }
     inline void modify_state(int pos, int k) { // modify 都要对nexReg进行修改
-      if(!pos) return ;
-      nexReg.regState[pos] = k;
+      if(pos) nexReg.regState[pos] = k;
     }
     inline void modify_value(int pos, int state, uint k) {
       // 需要当前reg[pos]的State与commit的指令编号相同才行!
 
     // assert(state == nexReg.regState[pos]);
-      if(!pos) return ;
+    if(!pos) return ;
       nexReg.reg[pos] = k;
       if(state == nexReg.regState[pos]) {
         nexReg.regState[pos] = 0;
@@ -116,7 +116,7 @@ struct RS_node {
 
   RS_node() {
     busy = 0;
-    Q1 = Q2 = V1 = V2 = 0;
+    Q1 = Q2 = V1 = V2 = ID = 0;
     ins.clear();
   }
   RS_node(bool busy, int Q1, int Q2, uint V1, uint V2, Instruction ins, int ID):
@@ -124,14 +124,15 @@ struct RS_node {
   
   void print() {
     if(!busy) return ;
-     ins.print(), printf(" id = %d, rd = %d, (%d)%d (%d)%d || %d %d\n", ID, ins.rd, ins.rs1, Q1, ins.rs2, Q2, V1, V2);
+    ins.print(), printf(" id = %d, rd = %d, (%d)%d (%d)%d || %d %d\n", ID, ins.rd, ins.rs1, Q1, ins.rs2, Q2, V1, V2);
   }
   inline bool ready() { // ready 来执行的状态
     return !Q1 && !Q2; 
   }
   inline void clear() { 
     busy = false;
-    Q1 = Q2 = V1 = V2 = 0; 
+    Q1 = Q2 = V1 = V2 = ID = 0; 
+    ins.clear();
   }
   void modify(int id, uint val) {
     if(Q1 == id) {
@@ -310,7 +311,7 @@ class SLBuffer{
       // front.node.print();
       // cout << front.ready() << endl;
       if(front.ready()) {
-        uint dst;
+        uint dst, val;
         front.node.ins.doit(dst, front.node.V1, front.node.V2);
         switch(front.node.ins.typ) {
           // store type
@@ -322,26 +323,26 @@ class SLBuffer{
           case LB: { // 符号位拓展[7:0]
             uint x = (uint) mem[dst]; 
             if(x >> 7 & 1) x |= 0xffffff00;
-            front.node.V2 = x;
+            val = x;
             break;
           }
           case LH: { // 符号位拓展[15:0]
             uint x = (uint) mem[dst] | ((uint) mem[dst + 1] << 8);
             if(x >> 15 & 1) x |= 0xffff0000;
-            front.node.V2 = x;
+            val = x;
             break;
           }
           case LW: { // 符号位拓展[31:0]
-            int idx = dst;
-            front.node.V2 = (uint) mem[idx] | ((uint) mem[idx + 1] << 8) | ((uint) mem[idx + 2] << 16) | ((uint) mem[idx + 3] << 24);
+            val = (uint) mem[dst] | ((uint) mem[dst + 1] << 8) | ((uint) mem[dst + 2] << 16) | ((uint) mem[dst + 3] << 24);
             break;
           }
-          case LBU: front.node.V2 = (uint) mem[dst]; break;
-          case LHU: front.node.V2 = (uint) mem[dst] | ((uint) mem[dst + 1] << 8); break;
+          case LBU: val = (uint) mem[dst]; break;
+          case LHU: val = (uint) mem[dst] | ((uint) mem[dst + 1] << 8); break;
         }
         curSLBres.hasres = true;
         curSLBres.id = front.node.ID;
-        curSLBres.val = front.node.V2;
+        curSLBres.node = front.node;
+        curSLBres.val = val;
         nexSLB.pop();
         
       } else {
@@ -361,6 +362,7 @@ class SLBuffer{
     }
 
     void clear() {
+      ROB_top_id = 0;
       preSLB.clear();
       nexSLB.clear();
     }
@@ -414,25 +416,31 @@ class ReorderBuffer {
     inline ROB_node getfront() {
       return preROB.front();
     }
-    inline bool can_commit() {
-      return preROB.front().ready;
-    }
     void pop() {
       nexROB.pop();
     }
     void modify(int id, Info &info) {
-      if(!(id >= 1 && id <= 32)) {
-        cout << id << ' ' << info.val << ' ' << info.node.ins.npc << endl;
-        assert(0);
-      }
-      // if(id == 19) {
-      //   cout << val << ' ' << npc << endl;
-      //   exit(0);
+      // if(!(id >= 1 && id <= 32)) {
+      //   cout << id << ' ' << val << ' ' << npc << endl;
+      //   assert(0);
       // }
       // assert(id >= 1 && id <= 32);
-      nexROB[id].val = info.val;
-      nexROB[id].ready = true;
-      nexROB[id].rs = info.node;
+
+      // for(int i = 1; i <= SIZE; ++i)
+      //   if(nexROB[i].rs.ID == id) {
+        nexROB[id].ready = true;
+        nexROB[id].val = info.val;
+        nexROB[id].rs = info.node;
+        // if(nexROB[id].rs.ins.rd != info.node.ins.rd) {
+        //   cout << id << endl;
+        //   cout << nexROB[id].rs.ins.rd << ' ' << info.node.ins.rd << endl;
+        //   info.node.ins.println();
+        //   nexROB[id].rs.ins.println();
+        // }
+        // assert(nexROB[id].rs.ins.rd == info.node.ins.rd);
+        // assert(nexROB[id].rs.ins.pc == info.node.ins.pc);
+      //}
+      // 有问题!!
     }
     ROB_node & operator [] (int pos) { 
       return preROB[pos];
@@ -662,9 +670,11 @@ void run_ROB() {
     //   cout << preEXres.val << endl;
     //   exit(0);
     // }
+    
     ROB.modify(preEXres.id, preEXres);
   }
   if(preSLBres.hasres) {
+    
     ROB.modify(preSLBres.id, preSLBres);
   }
 }
@@ -682,48 +692,63 @@ void Commit() {
     # ifdef Debug
       cout << "\033[34;1m Commit: \033[0m"; curCommit.node.print();
     # endif
-    // ins.println();
+    
+    
+    // if(ins.typ == BLTU) {
+    //   cout << ins.rs1 << ' ' << ins.rs2 << ' ' << curCommit.node.V1 << ' ' << curCommit.node.V2 << endl;
+    // }
     if(ins.typ == JALR || (ins.typ >= 3 && ins.typ <= 8)) { 
       // 分支预测指令: JALR 或者 branch指令
       
-      // if(ins.typ == BLTU) {
+      // if(ins.typ == JALR) {
       //   cout << "NPC : " << ins.npc << ' ' << ins.predict_pc << endl;
       // }
-
-      bool predict_res = true;
       if(ins.typ == JALR) {
-        predict_res = false;
-      } else if(ins.npc != ins.predict_pc) {
-        predict_res = false;
+        meet_JALR = false;
+        reg.modify_value(curCommit.node.ins.rd, curCommit.id, curCommit.val);
       }
-
-      if(predict_res == false) {
-      # ifdef Debug
-        printf("   REMAKE!!!!!!!!   \n\n\n\n");
-      # endif
+      if(ins.npc != ins.predict_pc) {
+        # ifdef Debug
+           printf("   REMAKE!!!!!!!!   \n\n\n\n");
+        # endif
         CLEAR();
         next_pc = ins.npc;
       }
-      if(ins.typ == JALR)
-        meet_JALR = false;
     } else {
-      // 其他指令
-      // if(curCommit.node.ID == 13) {
-      //   cout << curCommit.val << endl;
-      //   exit(0);
-      // }
-      if(~curCommit.node.ins.rd) {
-        // if(curCommit.node.ins.rd > 10) {
-        //   cout << curCommit.node.ins.rd << ' ' << curCommit.id << ' ' << curCommit.val << endl;
+        // 其他指令
+        // if(curCommit.node.ID == 13) {
+        //   cout << curCommit.val << endl;
         //   exit(0);
         // }
-        reg.modify_value(curCommit.node.ins.rd, curCommit.id, curCommit.val);
+      
+      // if(ins.typ == SW || ins.typ == SH || ins.typ == SB) {// store指令 
+      //   SLB.can_commit();
+      //   // assert();
+      // }
+      if(~curCommit.node.ins.rd) {
+          // if(curCommit.node.ins.rd == 11 && curCommit.val == 7275) {
+          //   //cout << curCommit.node.ins.rs1 << ' ' << curCommit.id << ' ' << curCommit.node.ins.<< endl;
+          //   curCommit.node.print();
+          //   exit(0);
+          // }
+
+          reg.modify_value(curCommit.node.ins.rd, curCommit.id, curCommit.val);
       }
-      if(ins.typ == SW || ins.typ == SH || ins.typ == SB) {// store指令 
-        SLB.can_commit();
-        // assert();
-      }
+      
     }
+    // if(ins.typ == LW) {
+    //   uint dst;
+    //   curCommit.node.ins.doit(dst, curCommit.node.V1, curCommit.node.V2);
+    //   //assert(((uint) mem[5020] | ((uint) mem[5020 + 1] << 8) | ((uint) mem[5020 + 2] << 16) | ((uint) mem[5020 + 3] << 24)) == 0);
+    //   cout << dst << ' ' << ((uint) mem[dst] | ((uint) mem[dst + 1] << 8) | ((uint) mem[dst + 2] << 16) | ((uint) mem[dst + 3] << 24)) << ' ';
+    //   curCommit.node.print();
+    // } else {
+    //   ins.println(); 
+    // }
+    // for(int i = 1; i <= 30; ++i)
+    //   cout << reg.nexReg.reg[i] << ' '; puts("");
+    // if(((uint) mem[5020] | ((uint) mem[5020 + 1] << 8) | ((uint) mem[5020 + 2] << 16) | ((uint) mem[5020 + 3] << 24)) != 0)
+    //   exit(0);
   }
 }
 
@@ -758,9 +783,9 @@ int main() {
       reg.print();
       puts("");
     # endif
-    // if(clk == 30)
+    // if(clk == 24)
     //   cout << next_pc << endl;
-    // if(clk == 45)
+    // if(clk == 85)
     //   exit(0);
   }
   return 0;
@@ -789,7 +814,7 @@ void CLEAR() {
   preEXres.clear(), curEXres.clear();
   preSLBres.clear(), curSLBres.clear();
   curEX.clear(), nexEX.clear();
-  curCommit.clear(), nexCommit.clear();
+  curCommit.clear();
 
   reg.clear();
   preIQ.clear(), nexIQ.clear();

@@ -42,7 +42,7 @@ class queue {
 		inline int getTail() { return tail + 1; } 
 		inline T & getfront() { return a[head]; }
 		T & operator [] (int pos) {
-			assert(pos >= 1 && pos <= 32);
+			//assert(pos >= 1 && pos <= 32);
 			return a[pos - 1];
 		}
 		void clear() {
