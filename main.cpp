@@ -29,6 +29,7 @@ namespace {
   }
 }
 
+int branch_cnt, branch_correct;
 int clk = 0, pc, next_pc;
 unsigned char mem[1000005]; // unsigned char: 代表1个byte
 
@@ -437,6 +438,14 @@ bool meet_JALR = false;
 bool issue_flag = false, issue_flag_nex = false;
 bool issue_to_rs = false, issue_to_slb = false;
 
+char predict[1 << 12 | 10];
+
+inline int Hash(int &pc) {
+  return pc >> 7 & 0xfff;
+}
+inline bool judge(int key) { // return true 
+  return predict[key] >= 2;
+}
 inline uint getcommand(int pos) {
   return (uint) mem[pos] | ((uint) mem[pos + 1] << 8) | ((uint) mem[pos + 2] << 16) | ((uint) mem[pos + 3] << 24);
 }
@@ -463,7 +472,11 @@ void run_InstructionQueue() {
       ins.predict_pc = pc + ins.imm;
     } else if((fet & 0x7f) == 0b1100011) { // B-type
       // to: branch predict 
-      ins.predict_pc = pc + ins.imm; // 默认跳转
+      if(judge(Hash(pc))) {
+        ins.predict_pc = pc + ins.imm; // 默认跳转
+      } else {
+        ins.predict_pc = pc + 4;
+      }
     } else {
       ins.predict_pc = pc + 4;
     }
@@ -646,6 +659,7 @@ void Commit() {
     if(ins.fetch == 0x0ff00513) {
       print(reg[10] & 255u);
       // assert(0);
+      std :: cerr << branch_cnt << ' ' << 1.0 * branch_correct / branch_cnt << std :: endl;
       exit(0);
     }
     # ifdef Debug
@@ -658,6 +672,8 @@ void Commit() {
       if(ins.typ == JALR) {
         meet_JALR = false;
         reg.modify_value(curCommit.node.ins.rd, curCommit.id, curCommit.val);
+      } else {
+        ++branch_cnt;
       }
       if(ins.npc != ins.predict_pc) {
         # ifdef Debug
@@ -665,7 +681,16 @@ void Commit() {
         # endif
         CLEAR();
         next_pc = ins.npc;
+      } else {
+        ++branch_correct;
       }
+      // 更新二位饱和计数器 
+      int key = Hash(ins.pc);
+      if(ins.npc != ins.predict_pc)
+        predict[key] += (predict[key] < 2) ? 1 : -1;
+      else predict[key] = (predict[key] < 2) ? 0 : 3;
+      // int bit = (ins.npc == ins.predict_pc) == (predict[key] >= 2);
+      // predict[key] = (predict[key] & 1) << 1 | bit;
     } else {
         // 其他指令
       if(~curCommit.node.ins.rd) {
